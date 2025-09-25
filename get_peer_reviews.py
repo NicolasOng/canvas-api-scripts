@@ -1,7 +1,8 @@
 import requests
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 import pytz
+import argparse
 
 import pandas as pd
 
@@ -9,16 +10,6 @@ from typing import Any
 
 base_url = "https://canvas.ualberta.ca/"
 access_token = "..."
-
-course_id = 28424
-assignment_id = 646756
-rubrics_id = 9732
-rubrics_association_id = 21951
-user_id = 121189
-
-course_id_800 = 28424
-course_id_801 = 28425
-
 
 def pagination(url: str | None, headers: dict[str, str], params: dict[str, Any]) -> list[dict[str, Any]]:
     '''
@@ -379,15 +370,39 @@ def get_all_submissions(course_id: int, assignment_id: int, users_df: pd.DataFra
     
     return df
 
-user_df = get_all_users(course_id)
-submissions_df = get_all_submissions(course_id, assignment_id, user_df)
-assessments_df = get_all_assessments(course_id, rubrics_id, rubrics_association_id, user_df, submissions_df)
+def get_and_save_peer_review_data(course_id: int, assignment_id: int, rubrics_id: int, rubrics_association_id: int) -> None:
+    '''
+    Gets all users, submissions, and assessments for the given course and assignment,
+    and saves them to CSV files.
+    '''
+    user_df = get_all_users(course_id)
+    submissions_df = get_all_submissions(course_id, assignment_id, user_df)
+    assessments_df = get_all_assessments(course_id, rubrics_id, rubrics_association_id, user_df, submissions_df)
 
-user_df.to_csv('users.csv', index=False)
-submissions_df.to_csv('submissions.csv', index=False)
-assessments_df.to_csv('assessments.csv', index=False)
+    user_df.to_csv('users.csv', index=False)
+    submissions_df.to_csv('submissions.csv', index=False)
+    assessments_df.to_csv('assessments.csv', index=False)
 
-print("DataFrames saved to CSV files:")
-print("- users.csv")
-print("- submissions.csv") 
-print("- assessments.csv")
+    print("DataFrames saved to CSV files:")
+    print("- users.csv")
+    print("- submissions.csv") 
+    print("- assessments.csv")
+
+def parse_arguments():
+    '''
+    Define and parse command line arguments.
+    '''
+    parser = argparse.ArgumentParser(
+        description="Extract peer review data from Canvas"
+    )
+    parser.add_argument('-c', '--course-id', type=int, default=28424, help='Canvas course ID')
+    parser.add_argument('-a', '--assignment-id', type=int, default=646756, help='Canvas assignment ID')
+    parser.add_argument('-r', '--rubrics-id', type=int, default=9732, help='Canvas rubrics ID')
+    parser.add_argument('-ra', '--rubrics-association-id', type=int, default=21951, help='Canvas rubrics association ID')
+    parser.add_argument('-at', '--access-token', type=str, default=access_token, help='Canvas API access token')
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_arguments()
+    access_token = args.access_token
+    get_and_save_peer_review_data(args.course_id, args.assignment_id, args.rubrics_id, args.rubrics_association_id)
