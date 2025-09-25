@@ -1,5 +1,7 @@
 import requests
 import json
+from datetime import datetime, timezone
+import pytz
 
 import pandas as pd
 
@@ -196,43 +198,68 @@ def list_assignment_submissions(course_id: int, assignment_id: int) -> list[dict
     return pagination(url, headers, params)
 
 
-# print(response.status_code)
-# print(type(response.json()))
-# print(len(response.json()))
-# #print(json.dumps(response.json(), indent=4))
-# print(response.json().keys())
-# print(len(response.json()["assessments"]))
-# print(json.dumps(response.json()["assessments"][0], indent=4))
-
-def test():
+def get_all_assessments(course_id: int, rubrics_id: int, rubrics_association_id: int, users_df: pd.DataFrame, submissions_df: pd.DataFrame) -> pd.DataFrame:
+    '''
+    Gets all assessments for a rubric in a course.
+    Then filters the assessments by the rubric_association_id.
+    '''
+    # get the rubric, along with all the assessments associated with it
     rubric = get_rubric(course_id, rubrics_id)
     assessments = rubric["assessments"]
 
-    num_total_assessments = len(assessments)
+    # log some stats
+    print(f"Found {len(assessments)} total assessments for rubric {rubrics_id} in course {course_id}.")
 
-    filtered_assessments = [
+    num_associated = len([ass for ass in assessments if ass["rubric_association_id"] == rubrics_association_id])
+    num_peer_reviews = len([ass for ass in assessments if ass["assessment_type"] == "peer_review"])
+    num_submissions = len([ass for ass in assessments if ass["artifact_type"] == "Submission"])
+
+    print(f"Found {num_associated} with the correct association {rubrics_association_id} ({num_associated/len(assessments) if assessments else 0:.2%})")
+    print(f"Found {num_peer_reviews} peer reviews ({num_peer_reviews/len(assessments) if assessments else 0:.2%})")
+    print(f"Found {num_submissions} assessing submissions ({num_submissions/len(assessments) if assessments else 0:.2%})")
+
+    # filter assessments for the correct association
+    assessments = [
         assessment for assessment in assessments 
         if assessment["rubric_association_id"] == rubrics_association_id
     ]
 
-    num_filtered_assessments = len(filtered_assessments)
+    assessment_ids: list[int] = []
+    scores: list[float] = []
+    assessed_ids: list[int | None] = []
+    assessor_ids: list[int | None] = []
+    attempts: list[int] = []
+    for assessment in assessments:
+        # get the assessment id, score, and attempt number
+        assessment_ids.append(assessment["id"])
+        scores.append(assessment["score"])
+        attempts.append(assessment["artifact_attempt"])
+        # convert the assessor id to student id
+        assessor_id = assessment["assessor_id"]
+        assessor_student_id = get_student_id_by_canvas_id(users_df, assessor_id)
+        assessor_ids.append(assessor_student_id)
+        if assessor_student_id is None:
+            print(f"Warning: Could not find student_id for assessor canvas_id {assessor_id}")
+        # convert the artifcact id to student id
+        artifact_id = assessment["artifact_id"]
+        assessed_student_id = get_student_id_by_submissions_id(submissions_df, artifact_id)
+        assessed_ids.append(assessed_student_id)
+        if assessed_student_id is None:
+            print(f"Warning: Could not find student_id for artifact submission_id {artifact_id}")
+    
+    # Create DataFrame from the lists
+    df = pd.DataFrame({
+        'assessment_id': assessment_ids,
+        'assessed_student_id': assessed_ids,
+        'assessor_student_id': assessor_ids,
+        'score': scores,
+        'attempt': attempts
+    })
 
-    print(f"Found {num_filtered_assessments} assessments with rubric_association_id {rubrics_association_id} out of {num_total_assessments} total assessments.")
+    print(f"Created DataFrame with {len(df)} rows and {len(df.columns)} columns.")
+    print(df.head())
 
-    score_total = 0
-    total = 0
-    for assessment in filtered_assessments:
-        score_total += assessment["score"]
-        total += 1
-
-    print(f"Average score: {score_total/total if total > 0 else 0:.2f} ({score_total}/{total})")
-
-    print(json.dumps(filtered_assessments[:3], indent=4))
-
-def test2():
-    a = list_assignment_submissions(course_id, assignment_id)
-    print(f"Found {len(a)} submissions for assignment {assignment_id} in course {course_id}.")
-    print(json.dumps(a[:1], indent=4))
+    return df
 
 def get_all_users(course_id: int) -> pd.DataFrame:
     '''
@@ -253,7 +280,7 @@ def get_all_users(course_id: int) -> pd.DataFrame:
         email: str = user["email"]
         ccids.append(email.split("@")[0]) # email is in the format ccid@ualberta.ca
     
-    # Create DataFrame from the three lists
+    # Create DataFrame from the lists
     df = pd.DataFrame({
         'canvas_id': canvas_id,
         'name': names,
@@ -266,13 +293,36 @@ def get_all_users(course_id: int) -> pd.DataFrame:
     
     return df
 
+def get_student_id_by_canvas_id(users_df: pd.DataFrame, canvas_id: int) -> int | None:
+    '''
+    Gets the student_id for a given canvas_id from the users DataFrame.
+    Returns None if canvas_id is not found.
+    '''
+    result = users_df[users_df['canvas_id'] == canvas_id]['student_id']
+    if len(result) > 0:
+        return result.iloc[0]
+    else:
+        return None
+
+def get_student_id_by_submissions_id(submissions_df: pd.DataFrame, submission_id: int) -> int | None:
+    '''
+    Gets the student_id for a given submission_id from the submissions DataFrame.
+    Returns None if submission_id is not found.
+    '''
+    result = submissions_df[submissions_df['submission_id'] == submission_id]['student_id']
+    if len(result) > 0:
+        return result.iloc[0]
+    else:
+        return None
+
 def get_all_submissions(course_id: int, assignment_id: int, users_df: pd.DataFrame) -> pd.DataFrame:
     '''
     Gets all submissions for the assignment in the course.
     '''
     # get the assignment's due date
     assignment = get_assignment(course_id, assignment_id)
-    due_date = assignment["due_at"]
+    due_date_str = assignment["due_at"]
+    due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
     print(f"Assignment: {assignment['name']} (ID: {assignment['id']})")
     print(f"Due at: {assignment['due_at']}")
     #print(json.dumps(assignment, indent=4))
@@ -282,30 +332,46 @@ def get_all_submissions(course_id: int, assignment_id: int, users_df: pd.DataFra
     print(f"Found {len(submissions)} submissions for assignment {assignment_id} in course {course_id}.")
     #print(json.dumps(submissions[0], indent=4))
 
-    '''
-    Interested in:
-    id
-    submitted_at -> convert to hours late
-    user_id -> convert to student_id
-    workflow_state
-    attempt
-    '''
-
-    return
-
-    student_ids: list[int] = []
     submission_ids: list[int] = []
-    scores: list[float | None] = []
+    submitted_ats: list[str | None] = []
+    hours_late: list[float] = []
+    student_ids: list[int | None] = []
+    status: list[str] = []
+    attempts: list[int] = []
     for submission in submissions:
-        student_ids.append(submission["user_id"])
+        # get submission id, status, and attempt number
         submission_ids.append(submission["id"])
-        scores.append(submission["score"])
-    
-    # Create DataFrame from the three lists
+        status.append(submission["workflow_state"])
+        attempts.append(submission["attempt"])
+        # get and convert the submitted_at to a timestamp,
+        # and calculate hours late
+        submitted_at_str: str | None = submission["submitted_at"]
+        if submitted_at_str:
+            # get the submit time (in UTC from Canvas)
+            submitted_at = datetime.fromisoformat(submitted_at_str.replace('Z', '+00:00'))
+            # convert to Mountain Time for display
+            mountain_tz = pytz.timezone('America/Edmonton')
+            submitted_at_mountain_tz = submitted_at.astimezone(mountain_tz)
+            submitted_at_fstr = submitted_at_mountain_tz.strftime("%Y-%m-%d %H:%M:%S %Z")
+            submitted_ats.append(submitted_at_fstr)
+            hours_late.append((submitted_at - due_date).total_seconds() / 3600.0)
+        else:
+            submitted_ats.append(None)
+            hours_late.append(0.0) # not submitted, so not late
+        # get the user id and convert to student_id
+        student_id = get_student_id_by_canvas_id(users_df, submission["user_id"])
+        student_ids.append(student_id)
+        if student_id is None:
+            print(f"Warning: Could not find student_id for canvas_id {submission['user_id']}")
+
+    # Create DataFrame from the lists
     df = pd.DataFrame({
-        'student_id': student_ids,
         'submission_id': submission_ids,
-        'score': scores
+        'student_id': student_ids,
+        'submitted_at': submitted_ats,
+        'hours_late': hours_late,
+        'status': status,
+        'attempt': attempts
     })
     
     print(f"Created DataFrame with {len(df)} rows and {len(df.columns)} columns.")
@@ -313,4 +379,15 @@ def get_all_submissions(course_id: int, assignment_id: int, users_df: pd.DataFra
     
     return df
 
-get_all_submissions(course_id, assignment_id, None)
+user_df = get_all_users(course_id)
+submissions_df = get_all_submissions(course_id, assignment_id, user_df)
+assessments_df = get_all_assessments(course_id, rubrics_id, rubrics_association_id, user_df, submissions_df)
+
+user_df.to_csv('users.csv', index=False)
+submissions_df.to_csv('submissions.csv', index=False)
+assessments_df.to_csv('assessments.csv', index=False)
+
+print("DataFrames saved to CSV files:")
+print("- users.csv")
+print("- submissions.csv") 
+print("- assessments.csv")
