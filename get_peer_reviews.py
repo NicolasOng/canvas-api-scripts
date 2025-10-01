@@ -197,10 +197,7 @@ def get_all_assessments(course_id: int, rubrics_id: int, rubrics_association_id:
     '''
     # get the rubric, along with all the assessments associated with it
     rubric = get_rubric(course_id, rubrics_id)
-    with open("test.json", "w") as _f:
-        json.dump(rubric, _f, indent=4)
     assessments = rubric["assessments"]
-
     # log some stats
     print(f"Found {len(assessments)} total assessments for rubric {rubrics_id} in course {course_id}.")
 
@@ -255,8 +252,13 @@ def get_all_assessments(course_id: int, rubrics_id: int, rubrics_association_id:
         'assessor_student_id': assessor_ids,
         'score': scores,
         'attempt': attempts,
-        "individual_points": rubric_scores
     })
+
+    rubric_df = pd.DataFrame(rubric_scores)
+    rubric_df = rubric_df.add_prefix("rubric_")   # e.g. rubric_0, rubric_1, rubric_2
+
+    # Concatenate both
+    df = pd.concat([df, rubric_df], axis=1)
 
     print(f"Created DataFrame with {len(df)} rows and {len(df.columns)} columns.")
     print(df.head())
