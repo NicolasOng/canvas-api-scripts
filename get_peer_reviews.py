@@ -1,4 +1,5 @@
 import requests
+import os
 import json
 from datetime import datetime
 import pytz
@@ -9,7 +10,7 @@ import pandas as pd
 from typing import Any
 
 base_url = "https://canvas.ualberta.ca/"
-access_token = "..."
+access_token = os.getenv("CANVAS_API_KEY")
 
 def pagination(url: str | None, headers: dict[str, str], params: dict[str, Any]) -> list[dict[str, Any]]:
     '''
@@ -95,7 +96,7 @@ def list_rubrics(course_id: int) -> list[dict[str, Any]]:
     '''
     url = f"{base_url}/api/v1/courses/{course_id}/rubrics"
     headers = {"Content-Type": "application/json"}
-    params = {"access_token": access_token}
+    params = {"access_token": access_token, "include": ["submission_comments", "user"]}
     return pagination(url, headers, params)
 
 def get_rubric(course_id: int, rubrics_id: int) -> dict[str, Any]:
@@ -109,8 +110,8 @@ def get_rubric(course_id: int, rubrics_id: int) -> dict[str, Any]:
     headers = {"Content-Type": "application/json"}
     params: dict[str, Any] = {
         "access_token": access_token,
-        "include": ["assessments"],
-        #"style": "comments_only"
+        "include": ["peer_assessments"],
+        "style": "full"
     }
     response = requests.get(url,
                             headers=headers,
@@ -197,7 +198,6 @@ def get_all_assessments(course_id: int, rubrics_id: int, rubrics_association_id:
     # get the rubric, along with all the assessments associated with it
     rubric = get_rubric(course_id, rubrics_id)
     assessments = rubric["assessments"]
-
     # log some stats
     print(f"Found {len(assessments)} total assessments for rubric {rubrics_id} in course {course_id}.")
 
@@ -220,6 +220,7 @@ def get_all_assessments(course_id: int, rubrics_id: int, rubrics_association_id:
     assessed_ids: list[int | None] = []
     assessor_ids: list[int | None] = []
     attempts: list[int] = []
+    rubric_scores: list[list[float]] = []
     for assessment in assessments:
         # get the assessment id, score, and attempt number
         assessment_ids.append(assessment["id"])
@@ -237,15 +238,27 @@ def get_all_assessments(course_id: int, rubrics_id: int, rubrics_association_id:
         assessed_ids.append(assessed_student_id)
         if assessed_student_id is None:
             print(f"Warning: Could not find student_id for artifact submission_id {artifact_id}")
-    
+        
+        peer_review_scores = []
+        for rubric_score in assessment["data"]:
+            score = rubric_score.get("points", 0.0)
+            peer_review_scores.append(score)
+        rubric_scores.append(peer_review_scores)
+
     # Create DataFrame from the lists
     df = pd.DataFrame({
         'assessment_id': assessment_ids,
         'assessed_student_id': assessed_ids,
         'assessor_student_id': assessor_ids,
         'score': scores,
-        'attempt': attempts
+        'attempt': attempts,
     })
+
+    rubric_df = pd.DataFrame(rubric_scores)
+    rubric_df = rubric_df.add_prefix("rubric_")   # e.g. rubric_0, rubric_1, rubric_2
+
+    # Concatenate both
+    df = pd.concat([df, rubric_df], axis=1)
 
     print(f"Created DataFrame with {len(df)} rows and {len(df.columns)} columns.")
     print(df.head())
