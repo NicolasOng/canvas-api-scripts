@@ -383,6 +383,43 @@ def get_all_submissions(course_id: int, assignment_id: int, users_df: pd.DataFra
     
     return df
 
+def get_all_submissions_raw(course_id: int, assignment_id: int) -> pd.DataFrame:
+    '''
+    Gets all submissions for the assignment in the course.
+    Minimal editing
+    '''
+
+    # get all submissions for the assignment
+    submissions = list_assignment_submissions(course_id, assignment_id)
+    print(f"Found {len(submissions)} submissions for assignment {assignment_id} in course {course_id}.")
+
+    submission_ids: list[int] = []
+    submitted_ats: list[str | None] = []
+    user_ids: list[int | None] = []
+    status: list[str] = []
+    attempts: list[int] = []
+    for submission in submissions:
+        # get submission id, status, and attempt number
+        submission_ids.append(submission["id"])
+        status.append(submission["workflow_state"])
+        attempts.append(submission["attempt"])
+        user_ids.append(submission["user_id"])
+        submitted_ats.append(submission["submitted_at"])
+        
+    # Create DataFrame from the lists
+    df = pd.DataFrame({
+        'submission_id': submission_ids,
+        'user_id': user_ids,
+        'submitted_at': submitted_ats,
+        'status': status,
+        'attempt': attempts
+    })
+    
+    print(f"Created DataFrame with {len(df)} rows and {len(df.columns)} columns.")
+    print(df.head())
+    
+    return df
+
 def get_and_save_peer_review_data(course_id: int, assignment_id: int, rubrics_id: int, rubrics_association_id: int) -> None:
     '''
     Gets all users, submissions, and assessments for the given course and assignment,
@@ -401,6 +438,18 @@ def get_and_save_peer_review_data(course_id: int, assignment_id: int, rubrics_id
     print("- submissions.csv") 
     print("- assessments.csv")
 
+def get_and_save_peer_review_data_raw(course_id: int, assignment_id: int) -> None:
+    '''
+    Gets all users and submissions for the given course and assignment,
+    and saves them to CSV files.
+    Minimal editing
+    '''
+    submissions_df = get_all_submissions_raw(course_id, assignment_id)
+    submissions_df.to_csv('submissions_raw.csv', index=False)
+
+    print("DataFrames saved to CSV files:")
+    print("- submissions_raw.csv")
+
 def parse_arguments():
     '''
     Define and parse command line arguments.
@@ -418,4 +467,5 @@ def parse_arguments():
 if __name__ == "__main__":
     args = parse_arguments()
     access_token = args.access_token
+    #get_and_save_peer_review_data_raw(args.course_id, args.assignment_id)
     get_and_save_peer_review_data(args.course_id, args.assignment_id, args.rubrics_id, args.rubrics_association_id)
